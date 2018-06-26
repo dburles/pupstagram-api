@@ -1,9 +1,7 @@
 const { ApolloServer, gql } = require("apollo-server");
-const fetch = require("node-fetch").default;
+const { RESTDataSource } = require("apollo-datasource-rest");
 const { unique } = require("shorthash");
 const _ = require("lodash");
-
-const API = "https://dog.ceo/api";
 
 // Construct a schema, using GraphQL schema language
 const typeDefs = gql`
@@ -35,36 +33,57 @@ const createDog = (subbreeds, breed) => ({
 // Provide resolver functions for your schema fields
 const resolvers = {
   Query: {
-    dogs: async () => {
-      const results = await fetch(`${API}/breeds/list/all`);
-      const { message: dogs } = await results.json();
-
-      return _.map(dogs, createDog);
+    dogs: async (root, _args, { dataSources }) => {
+      return _.map(await dataSources.dogsAPI.getDogs(), createDog);
     },
-    dog: async (root, { breed }) => {
-      const results = await fetch(`${API}/breed/${breed}/list`);
-      const { message: subbreeds } = await results.json();
-
-      return createDog(subbreeds, breed);
+    dog: async (root, { breed }, { dataSources }) => {
+      return createDog(await dataSources.dogsAPI.getSubbreeds(breed), breed);
     }
   },
   Dog: {
-    displayImage: async ({ breed }) => {
-      const results = await fetch(`${API}/breed/${breed}/images/random`);
-      const { message: image } = await results.json();
-      return image;
+    displayImage: async ({ breed }, _args, { dataSources }) => {
+      return dataSources.dogsAPI.getDisplayImage(breed);
     },
-    images: async ({ breed }) => {
-      const results = await fetch(`${API}/breed/${breed}/images`);
-      const { message: images } = await results.json();
+    images: async ({ breed }, _args, { dataSources }) => {
+      const images = await dataSources.dogsAPI.getImages(breed);
       return images.map(image => ({ url: image, id: unique(image) }));
     }
   }
 };
 
+class DogsDataSource extends RESTDataSource {
+  constructor() {
+    super();
+    this.baseURL = "https://dog.ceo/api";
+  }
+
+  async getDogs() {
+    unwrap(this.get('breeds/list/all'));
+  }
+
+  async getSubbreeds(breed) {
+    return unwrap(this.get(`breed/${breed}/list`));
+  }
+
+  async getDisplayImage(breed) {
+    return unwrap(this.get(`breed/${breed}/images/random`));
+  }
+
+  async getImages(breed) {
+    return unwrap(this.get(`breed/${breed}/images`));
+  }
+}
+
+async function unwrap(result) {
+  return (await result).message;
+}
+
 const server = new ApolloServer({
   typeDefs,
-  resolvers
+  resolvers,
+  dataSources: () => ({
+    dogsAPI: new DogsDataSource()
+  })
 });
 
 server.listen().then(({ url }) => {
